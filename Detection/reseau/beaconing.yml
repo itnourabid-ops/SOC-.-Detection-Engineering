@@ -1,0 +1,81 @@
+title: Beaconing C2 – connexions sortantes à intervalle régulier
+id: d4e5f6a7-8b9c-4d0e-1f2a-3b4c5d6e7f33
+status: experimental
+description: |
+  Un implant (Cobalt Strike, Sliver, Mythic…) contacte son serveur C2 à
+  intervalle quasi constant (sleep + faible jitter). On mesure, pour chaque
+  couple source → destination externe, la régularité des connexions :
+  coefficient de variation (écart-type / moyenne de l'intervalle) faible et
+  nombre de connexions élevé.
+  Source : flux Suricata (event_type=flow).
+references:
+  - https://attack.mitre.org/techniques/T1071/
+  - https://attack.mitre.org/techniques/T1573/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+  - attack.t1573
+logsource:
+  product: network
+  service: suricata
+detection:
+  selection:
+    event_type: flow
+  filter_internal:
+    dest_ip|cidr:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+  condition: selection and not filter_internal   # + calcul de régularité (voir SPL)
+falsepositives:
+  - Mises à jour, NTP, télémétrie, agents de supervision, Tailscale (DERP)
+level: high
+
+x_collecte:
+  evenements: ["Suricata flow"]
+  prerequis: "Sonde Suricata en coupure sur le trafic sortant (FW en prod)"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "5 * * * *"
+  earliest: "-125m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 12h
+    fields: src_ip,dest_ip
+  search: |
+    index=main sourcetype=suricata event_type=flow
+    | where NOT cidrmatch("10.0.0.0/8", dest_ip) AND NOT cidrmatch("172.16.0.0/12", dest_ip) AND NOT cidrmatch("192.168.0.0/16", dest_ip) AND NOT cidrmatch("100.64.0.0/10", dest_ip)
+    | eval dns_name=coalesce('tls.sni', 'http.hostname')
+    | sort 0 src_ip dest_ip dest_port _time
+    | streamstats current=f last(_time) as precedent by src_ip dest_ip dest_port
+    | eval delta=_time-precedent
+    | stats count as nb_connexions avg(delta) as intervalle_moyen stdev(delta) as ecart_type sum(bytes_toserver) as octets_envoyes
+        values(dns_name) as domaine by src_ip dest_ip dest_port
+    | eval cv=round(ecart_type/intervalle_moyen, 3), intervalle_moyen=round(intervalle_moyen, 1)
+    | where nb_connexions >= 20 AND intervalle_moyen >= 10 AND cv < 0.2
+    | sort cv
+
+x_exclusions:
+  - "Plages privées et CGNAT Tailscale (100.64.0.0/10)."
+  - "Lookup destinations_legit.csv (dest_ip / domaine) : NTP, Windows Update, éditeurs, DERP Tailscale."
+  - "Seuils : >= 20 connexions sur 2h, intervalle >= 10 s, CV < 0.2."
+
+x_triage:
+  - "Réputation de dest_ip / domaine (VirusTotal, AbuseIPDB, OTX) ? Domaine récent ?"
+  - "Quel processus génère ces connexions sur l'hôte source ? (Sysmon 3 / Kunai connect)"
+  - "Volume : octets_envoyes faible et constant = beacon ; pic = exfiltration possible."
+
+x_reponse:
+  endiguement:
+    - "Bloquer dest_ip / domaine sur le FW et le DNS ; isoler l'hôte source."
+  remediation:
+    - "Analyse de l'implant (processus, persistance), recherche de la même destination sur le parc."
+
+x_test:
+  commande: "while true; do curl -s -o /dev/null https://example.org; sleep 30; done   # depuis l'hôte supervisé"
+  resultat: "À compléter"

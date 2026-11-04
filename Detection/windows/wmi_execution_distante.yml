@@ -1,0 +1,79 @@
+title: Exécution distante via WMI sans redirection (wmiexec -silentcommand)
+id: 2a7d9c41-55e0-4d83-b1f6-7c3e8a0d9b12
+status: experimental
+description: |
+  Complément de la règle Impacket WMIExec. Avec -silentcommand, wmiexec lance
+  directement le binaire (ex. calc.exe) comme enfant de WmiPrvSE.exe, sans cmd.exe
+  et sans redirection vers \\127.0.0.1 (Guide BUILD p.11-12). La seule trace est
+  "un processus inhabituel enfant de WmiPrvSE, dans une session réseau".
+  Règle séparée car plus bruyante : WmiPrvSE lance légitimement des processus
+  (SCCM, inventaires, scripts d'admin). Sévérité plus basse, exclusions par lookup.
+references:
+  - https://attack.mitre.org/techniques/T1047/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.execution
+  - attack.t1047
+logsource:
+  category: process_creation
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    ParentImage|endswith: '\wmiprvse.exe'
+  filter_impacket:
+    CommandLine|contains: '\\127.0.0.1\'      # déjà couvert par impacket_wmiexec
+  filter_legit:
+    Image|endswith:
+      - '\WmiPrvSE.exe'
+      - '\WerFault.exe'
+      - '\msiexec.exe'
+  condition: selection and not filter_impacket and not filter_legit
+falsepositives:
+  - Outils de gestion de parc (SCCM, GLPI agent), scripts d'administration WMI
+level: medium
+
+x_collecte:
+  evenements: ["Sysmon 1", "Security 4624 type 3 (jointure LogonId)"]
+  prerequis: "Sysmon-modular"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 4h
+    fields: ComputerName,Image
+  search: |
+    index=main source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 ParentImage="*\\wmiprvse.exe"
+      NOT CommandLine="*127.0.0.1*"
+      NOT Image IN ("*\\WmiPrvSE.exe", "*\\WerFault.exe", "*\\msiexec.exe")
+    | join type=left max=1 ComputerName LogonId
+        [ search index=main source="WinEventLog:Security" EventCode=4624 Logon_Type=3 earliest=-24h
+          | eval LogonId=mvindex(Logon_ID, -1)
+          | rename Source_Network_Address as src_ip, Workstation_Name as poste_attaquant
+          | fields ComputerName LogonId src_ip poste_attaquant ]
+    | where isnotnull(src_ip) AND src_ip!="-" AND src_ip!="::1" AND src_ip!="127.0.0.1"
+    | table _time ComputerName User LogonId src_ip poste_attaquant Image CommandLine ParentCommandLine
+
+x_exclusions:
+  - "Le filtre 'session réseau avec IP source' élimine l'essentiel du bruit local (tâches système)."
+  - "Lookup à créer en RUN : wmi_admin_tools.csv (Image, src_ip) pour les outils d'admin connus."
+
+x_triage:
+  - "Le binaire lancé a-t-il un sens pour de l'administration (ex. calc.exe, rundll32, powershell -enc = non) ?"
+  - "src_ip est-elle un poste d'administration ? Corrélation avec d'autres alertes sur la même IP ?"
+
+x_reponse:
+  endiguement:
+    - "Identiques à la règle Impacket WMIExec (isolation de src_ip, désactivation du compte)."
+  remediation:
+    - "Analyse du binaire lancé (hash Sysmon → VirusTotal) et de sa persistance éventuelle."
+
+x_test:
+  commande: "impacket-wmiexec -share C$ -silentcommand TEST/Administrator@192.168.10.100 calc.exe"
+  resultat: "À compléter"

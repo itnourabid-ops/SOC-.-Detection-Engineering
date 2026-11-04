@@ -1,0 +1,77 @@
+title: Kerberoasting – demande de tickets de service en RC4
+id: 9b1e4c7a-2d3f-4a5b-8c6d-7e8f9a0b1c21
+status: experimental
+description: |
+  L'attaquant (simple compte du domaine) demande des tickets de service (TGS)
+  pour des comptes utilisateurs portant un SPN, en forçant le chiffrement RC4
+  (0x17), puis casse le ticket hors ligne pour retrouver le mot de passe du
+  compte de service. Outils : impacket-GetUserSPNs -request, Rubeus kerberoast.
+  Dans un domaine moderne (AES par défaut), un TGS RC4 vers un compte de service
+  utilisateur est anormal ; plusieurs SPN demandés d'affilée est caractéristique.
+references:
+  - https://attack.mitre.org/techniques/T1558/003/
+  - https://adsecurity.org/?p=3458
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.credential_access
+  - attack.t1558.003
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4769
+    TicketEncryptionType: '0x17'
+    Status: '0x0'
+  filter_machine:
+    ServiceName|endswith: '$'
+  filter_krbtgt:
+    ServiceName: krbtgt
+  condition: selection and not filter_machine and not filter_krbtgt
+falsepositives:
+  - Applications anciennes ne supportant que RC4 (à recenser et exclure par compte de service)
+level: high
+
+x_collecte:
+  evenements: ["Security 4769 (DC)"]
+  prerequis: "Audit Kerberos Service Ticket Operations : Success (activé sur DC – annexe p.15)"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: compte,src_ip
+  search: |
+    index=main source="WinEventLog:Security" EventCode=4769 Ticket_Encryption_Type="0x17" (Failure_Code="0x0" OR Status="0x0")
+      NOT Service_Name="*$" NOT Service_Name="krbtgt"
+    | eval compte=mvindex(split(Account_Name, "@"), 0), src_ip=replace(Client_Address, "::ffff:", "")
+    | stats min(_time) as debut max(_time) as fin count dc(Service_Name) as nb_spn values(Service_Name) as spn_demandes
+        by compte src_ip ComputerName
+    | convert ctime(debut) ctime(fin)
+
+x_exclusions:
+  - "Lookup kerberos_rc4_legit.csv (Service_Name) pour les applications legacy identifiées."
+  - "Ne pas exclure par compte demandeur : un compte légitime peut être compromis."
+
+x_triage:
+  - "nb_spn > 1 en quelques secondes → quasi certain (outil automatisé)."
+  - "Le compte demandeur a-t-il une raison d'accéder à ces services ? src_ip est-elle son poste habituel ?"
+  - "Les comptes de service visés ont-ils des mots de passe faibles / anciens (pwdLastSet) ? Privilèges ?"
+
+x_reponse:
+  endiguement:
+    - "Réinitialiser immédiatement le mot de passe des comptes de service visés (mot de passe long, 25+ caractères)."
+    - "Désactiver / surveiller le compte demandeur ; isoler src_ip si comportement confirmé."
+  remediation:
+    - "Migrer vers des gMSA ; imposer AES (msDS-SupportedEncryptionTypes) ; retirer les SPN inutiles."
+    - "Rechercher des connexions ultérieures avec les comptes de service visés (4624/4768)."
+
+x_test:
+  commande: "impacket-GetUserSPNs test.local/<user>:<mdp> -dc-ip 192.168.10.100 -request"
+  resultat: "Prérequis lab : créer un compte avec SPN : setspn -A HTTP/srv.test.local svc_web"

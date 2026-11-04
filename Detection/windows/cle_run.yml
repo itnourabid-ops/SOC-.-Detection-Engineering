@@ -1,0 +1,75 @@
+title: Création ou modification d'une clé Run (persistance au démarrage)
+id: 0c3f6b9e-2a4d-4e7c-b8f1-a2b3c4d5e628
+status: experimental
+description: |
+  Persistance classique : ajout d'une valeur sous ...\CurrentVersion\Run,
+  RunOnce, RunOnceEx ou Policies\Explorer\Run (HKLM ou HKCU), exécutée à
+  chaque ouverture de session / démarrage.
+  Trace : Sysmon 13 (registry value set), inclus par sysmon-modular
+  (12_13_14_registry_event).
+references:
+  - https://attack.mitre.org/techniques/T1547/001/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.persistence
+  - attack.t1547.001
+logsource:
+  category: registry_set
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    EventID: 13
+    TargetObject|contains:
+      - '\CurrentVersion\Run'
+      - '\CurrentVersion\Policies\Explorer\Run'
+  filter_installers:
+    Image|startswith:
+      - 'C:\Program Files\'
+      - 'C:\Program Files (x86)\'
+      - 'C:\Windows\Installer\'
+  condition: selection and not filter_installers
+falsepositives:
+  - Logiciels légitimes ajoutant leur lanceur (OneDrive, Teams, agents)
+level: medium
+
+x_collecte:
+  evenements: ["Sysmon 12/13 (registre)"]
+  prerequis: "Sysmon-modular 12_13_14_registry_event (inclut les clés Run)"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 4h
+    fields: ComputerName,TargetObject
+  search: |
+    index=main source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode IN (12,13)
+      (TargetObject="*\\CurrentVersion\\Run*" OR TargetObject="*\\Policies\\Explorer\\Run*")
+      NOT Image IN ("C:\\Program Files\\*", "C:\\Program Files (x86)\\*", "C:\\Windows\\Installer\\*")
+    | eval valeur=coalesce(Details, "(suppression / création de clé)")
+    | eval suspect=if(match(valeur, "(?i)(\\\\AppData\\\\|\\\\Temp\\\\|\\\\Users\\\\Public|powershell|cmd(\.exe)? /c|-enc|https?://|mshta|rundll32|regsvr32|wscript|cscript|\.vbs|\.js|\.bat|\.ps1)"), "oui", "non")
+    | table _time ComputerName User Image EventType TargetObject valeur suspect
+
+x_exclusions:
+  - "Processus écrivains situés dans Program Files / Windows\\Installer (installeurs)."
+  - "Champ 'suspect' pour prioriser ; ne pas exclure 'non' (un binaire malveillant peut avoir un chemin anodin)."
+
+x_triage:
+  - "Quel processus (Image) a écrit la clé ? reg.exe/powershell lancé par un utilisateur → suspect."
+  - "Le binaire référencé (valeur) existe-t-il, est-il signé, dans un chemin inscriptible ?"
+
+x_reponse:
+  endiguement:
+    - "Supprimer la valeur de registre ; mettre en quarantaine le binaire référencé."
+  remediation:
+    - "Rechercher le binaire sur les autres hôtes (hash) ; identifier le processus parent à l'origine."
+
+x_test:
+  commande: 'reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Updater /t REG_SZ /d "C:\Users\Public\upd.exe" /f'
+  resultat: "À compléter"

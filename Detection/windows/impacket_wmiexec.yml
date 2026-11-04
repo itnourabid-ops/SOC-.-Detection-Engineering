@@ -1,0 +1,105 @@
+title: Impacket WMIExec – exécution de commandes à distance via WMI
+id: 6f0c1d2a-3b4e-4c5d-8e9f-0a1b2c3d4e51
+status: test
+description: |
+  Détecte le shell semi-interactif d'Impacket wmiexec.py. L'outil crée via WMI
+  (Win32_Process.Create) un processus enfant de WmiPrvSE.exe, et redirige la sortie
+  de chaque commande vers un fichier "__<timestamp>.<n>" sur un partage administratif
+  de la machine elle-même (\\127.0.0.1\<partage>\), qu'il relit ensuite par SMB.
+  Version durcie de la règle Red Canary (cf. Guide BUILD p.9-12) :
+    - n'importe quel partage (contournement -share C$) ;
+    - shell cmd ET powershell (option -shell-type powershell) ;
+    - extraction des commandes, regroupement par session, IP source et poste attaquant.
+  Le cas -silentcommand (aucune redirection) est couvert par la règle
+  windows/wmi_execution_distante.yml.
+references:
+  - https://www.crowdstrike.com/en-us/blog/how-to-detect-and-prevent-impackets-wmiexec/
+  - https://blog.snapattack.com/hunting-impacket-part-2-b05279521db2
+  - https://redcanary.com/threat-detection-report/techniques/windows-management-instrumentation/
+  - https://attack.mitre.org/techniques/T1047/
+author: Groupe 3 – 5A 4AS (adapté de RedCanary / Micah Babinski)
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.execution
+  - attack.lateral_movement
+  - attack.t1047
+  - attack.t1021.002
+  - attack.s0357
+logsource:
+  category: process_creation
+  product: windows
+  service: sysmon
+detection:
+  selection_parent:
+    ParentImage|endswith: '\wmiprvse.exe'
+  selection_redirect:
+    CommandLine|re: '\\\\127\.0\.0\.1\\[^\\]+\\__[0-9]{1,10}\.[0-9]{1,10}'
+  condition: selection_parent and selection_redirect
+falsepositives:
+  - Très peu probable. Un outil d'administration qui reproduirait exactement le motif
+    "\\127.0.0.1\<partage>\__<n>.<n>" (aucun connu).
+level: high
+
+x_collecte:
+  evenements:
+    - "Sysmon 1 (process creation) – détection et extraction des commandes"
+    - "Security 4624 type 3 – IP source et nom du poste attaquant (jointure sur LogonId)"
+    - "Security 5140/5145 (partage) – complément d'investigation"
+  prerequis: "Sysmon-modular (1_process_creation) ; Audit Logon Success ; Audit File Share"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/5 * * * *"
+  earliest: "-10m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: ComputerName,LogonId
+  search: |
+    index=main source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 ParentImage="*\\wmiprvse.exe"
+    | where match(CommandLine, "\\\\\\\\127\.0\.0\.1\\\\[^\\\\]+\\\\__[0-9]{1,10}\.[0-9]{1,10}")
+    | rex field=CommandLine "(?i)/c\s+(?<commande>.+?)\s+1>\s+\S*127\.0\.0\.1"
+    | rex field=CommandLine "127\.0\.0\.1.(?<partage>[^\s]+?).__[0-9]"
+    | rex field=commande "(?i)-enc(odedcommand)?\s+(?<commande_b64>[A-Za-z0-9+/=]+)"
+    | eval shell=if(isnotnull(commande_b64), "powershell", "cmd")
+    | join type=left max=1 ComputerName LogonId
+        [ search index=main source="WinEventLog:Security" EventCode=4624 Logon_Type=3 earliest=-24h
+          | eval LogonId=mvindex(Logon_ID, -1), compte_reseau=mvindex(Account_Name, -1)
+          | rename Source_Network_Address as src_ip, Workstation_Name as poste_attaquant
+          | fields ComputerName LogonId src_ip poste_attaquant compte_reseau Authentication_Package ]
+    | stats min(_time) as debut max(_time) as fin count as nb_commandes
+            values(commande) as commandes values(commande_b64) as commandes_b64
+            values(shell) as shell values(partage) as partage values(User) as User
+            values(src_ip) as src_ip values(poste_attaquant) as poste_attaquant
+            values(Authentication_Package) as auth
+        by ComputerName LogonId
+    | convert ctime(debut) ctime(fin)
+
+x_exclusions:
+  - "Aucune exclusion par défaut : le motif est propre à Impacket."
+  - "Si un outil d'admin légitime est identifié en RUN : exclusion ciblée sur User + src_ip (jamais sur ComputerName seul)."
+
+x_triage:
+  - "L'IP source (src_ip) est-elle un poste d'administration connu (bastion LINSERV-BAST 192.168.10.90) ou une machine inattendue ?"
+  - "Le compte utilisé (User) est-il un compte d'admin, et était-il en activité à cette heure ?"
+  - "Authentification NTLM (auth=NTLM) depuis un poste non-domaine → possible pass-the-hash."
+  - "Quelles commandes ont été lancées ? Reconnaissance (whoami, ipconfig, net) ou action (dump, ajout de compte, téléchargement) ?"
+  - "Pour shell=powershell : décoder commandes_b64 (base64 UTF-16LE) avant qualification."
+
+x_reponse:
+  endiguement:
+    - "Isoler l'hôte source (src_ip) du réseau ; bloquer SMB/RPC (445, 135, 49152+) depuis cette IP."
+    - "Désactiver le compte utilisé et révoquer ses sessions ; réinitialiser son mot de passe (deux fois si krbtgt est en jeu)."
+  remediation:
+    - "Rechercher le même LogonId / src_ip sur tous les hôtes (mouvement latéral)."
+    - "Restreindre WMI/DCOM et SMB admin aux seuls postes d'administration (pare-feu Windows, tiering)."
+    - "Supprimer les comptes admin locaux partagés (LAPS) ; activer Credential Guard."
+
+x_test:
+  commande: |
+    impacket-wmiexec TEST/Administrator@192.168.10.100                      # partage par défaut ADMIN$
+    impacket-wmiexec -share C$ TEST/Administrator@192.168.10.100            # contournement partage
+    impacket-wmiexec -shell-type powershell TEST/Administrator@192.168.10.100
+  resultat: "À compléter (désactiver Defender si l'outil est bloqué – Guide BUILD p.7)"

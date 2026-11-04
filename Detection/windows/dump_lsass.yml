@@ -1,0 +1,103 @@
+title: Dump de la mémoire LSASS
+id: 6d9a2c5f-8b1e-4f3a-c4d6-e7f8a9b0c129
+status: experimental
+description: |
+  Extraction des secrets en mémoire (hash NT, tickets Kerberos, mots de passe en
+  clair WDigest) par lecture de la mémoire du processus lsass.exe. Trois angles :
+    1. Sysmon 10 : ouverture de lsass avec des droits de lecture mémoire (mimikatz,
+       nanodump, procdump, Task Manager) ;
+    2. Sysmon 1 : ligne de commande connue (comsvcs.dll MiniDump, procdump -ma lsass,
+       rundll32 ... MiniDump) ;
+    3. Sysmon 11 : création d'un fichier *lsass*.dmp.
+  À distance : impacket-secretsdump (registre SAM/LSA – autre technique), lsassy,
+  netexec --lsa / -M lsassy (utilise comsvcs MiniDump → angle 2).
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_access:
+    EventID: 10
+    TargetImage|endswith: '\lsass.exe'
+    GrantedAccess:
+      - '0x1010'
+      - '0x1410'
+      - '0x1438'
+      - '0x143a'
+      - '0x1fffff'
+      - '0x40'
+  filter_system:
+    SourceImage|endswith:
+      - '\MsMpEng.exe'
+      - '\wininit.exe'
+      - '\csrss.exe'
+      - '\Sysmon64.exe'
+      - '\svchost.exe'
+  selection_cli:
+    EventID: 1
+    CommandLine|contains:
+      - 'comsvcs'
+      - 'MiniDump'
+      - 'procdump'
+      - 'sekurlsa'
+  selection_file:
+    EventID: 11
+    TargetFilename|contains: 'lsass'
+    TargetFilename|endswith: '.dmp'
+  condition: (selection_access and not filter_system) or selection_cli or selection_file
+falsepositives:
+  - Antivirus / EDR tiers, outils de diagnostic Microsoft (WerFault lors d'un crash de lsass)
+level: critical
+
+x_collecte:
+  evenements: ["Sysmon 10 (process access)", "Sysmon 1", "Sysmon 11"]
+  prerequis: "Sysmon-modular 10_process_access : vérifier que l'accès à lsass.exe est INCLUS (config 'severe base noise reduction')"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/5 * * * *"
+  earliest: "-10m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: ComputerName,outil
+  search: |
+    index=main source="WinEventLog:Microsoft-Windows-Sysmon/Operational" (
+        (EventCode=10 TargetImage="*\\lsass.exe" GrantedAccess IN ("0x1010","0x1410","0x1438","0x143a","0x1fffff","0x1FFFFF","0x40")
+          NOT SourceImage IN ("*\\MsMpEng.exe","*\\wininit.exe","*\\csrss.exe","*\\Sysmon64.exe","*\\Sysmon.exe","*\\svchost.exe","*\\lsm.exe"))
+     OR (EventCode=1 (CommandLine="*comsvcs*MiniDump*" OR CommandLine="*procdump*lsass*" OR CommandLine="*procdump*-ma*" OR CommandLine="*sekurlsa*" OR CommandLine="*nanodump*"))
+     OR (EventCode=11 TargetFilename="*lsass*.dmp") )
+    | eval outil=coalesce(SourceImage, Image), detail=coalesce(CommandLine, TargetFilename, "GrantedAccess=".GrantedAccess)
+    | eval angle=case(EventCode==10, "accès mémoire lsass", EventCode==1, "ligne de commande de dump", EventCode==11, "fichier .dmp créé")
+    | stats min(_time) as debut values(angle) as angles values(detail) as details values(User) as User by ComputerName outil
+    | convert ctime(debut)
+
+x_exclusions:
+  - "Processus système et antivirus (liste ci-dessus). Toute exclusion supplémentaire = chemin COMPLET + vérification de signature."
+
+x_triage:
+  - "Quel processus (outil) a accédé à lsass ? Chemin, signature, hash ?"
+  - "Un fichier .dmp a-t-il été créé puis exfiltré (SMB 5145 sur le partage, connexions réseau Sysmon 3) ?"
+  - "Session de l'attaquant : corréler avec WMIExec / service suspect / logon réseau sur le même hôte."
+
+x_reponse:
+  endiguement:
+    - "CRITICAL : notification client sous 2h. Isoler l'hôte du réseau."
+    - "Considérer compromis tous les comptes ayant une session sur l'hôte ; réinitialiser leurs mots de passe (admins en priorité)."
+  remediation:
+    - "Activer RunAsPPL (LSA Protection) et Credential Guard ; désactiver WDigest."
+    - "Règle ASR 'Block credential stealing from LSASS' (Defender)."
+
+x_test:
+  commande: |
+    rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump <PID_lsass> C:\Windows\Temp\l.dmp full
+    netexec smb 192.168.10.101 -u Administrator -p '<mdp>' -M lsassy
+  resultat: "À compléter (Defender peut bloquer : désactiver sur le lab)"

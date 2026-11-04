@@ -1,0 +1,67 @@
+title: AS-REPRoasting – TGT délivré sans pré-authentification
+id: 4c8d2e1f-6a7b-4c9d-a0e1-f2a3b4c5d622
+status: experimental
+description: |
+  Pour les comptes ayant l'option "Do not require Kerberos preauthentication",
+  n'importe qui peut demander un TGT (AS-REP) dont une partie est chiffrée avec
+  le hash du mot de passe, puis le casser hors ligne. Outils :
+  impacket-GetNPUsers, Rubeus asreproast. Trace : 4768 avec
+  Pre_Authentication_Type = 0 (pas de pré-auth), souvent en RC4.
+references:
+  - https://attack.mitre.org/techniques/T1558/004/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.credential_access
+  - attack.t1558.004
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4768
+    PreAuthType: '0'
+    Status: '0x0'
+  condition: selection
+falsepositives:
+  - Comptes legacy volontairement configurés sans pré-authentification (devraient être corrigés)
+level: high
+
+x_collecte:
+  evenements: ["Security 4768 (DC)"]
+  prerequis: "Audit Kerberos Authentication Service : Success (activé sur DC)"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: src_ip
+  search: |
+    index=main source="WinEventLog:Security" EventCode=4768 Pre_Authentication_Type=0 (Result_Code="0x0" OR Status="0x0")
+    | eval src_ip=replace(Client_Address, "::ffff:", "")
+    | stats min(_time) as debut max(_time) as fin count dc(Account_Name) as nb_comptes values(Account_Name) as comptes_vises
+        values(Ticket_Encryption_Type) as chiffrement by src_ip ComputerName
+    | convert ctime(debut) ctime(fin)
+
+x_exclusions:
+  - "Aucune exclusion recommandée : corriger la configuration du compte plutôt que d'exclure."
+
+x_triage:
+  - "Le compte visé a-t-il réellement DONT_REQ_PREAUTH ? (Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true})"
+  - "src_ip est-elle un poste du domaine ? Plusieurs comptes visés → énumération offensive."
+
+x_reponse:
+  endiguement:
+    - "Réinitialiser le mot de passe des comptes visés ; isoler src_ip."
+  remediation:
+    - "Réactiver la pré-authentification Kerberos sur tous les comptes."
+    - "Surveiller les authentifications ultérieures des comptes visés."
+
+x_test:
+  commande: "impacket-GetNPUsers test.local/ -usersfile users.txt -dc-ip 192.168.10.100 -no-pass"
+  resultat: "Prérequis lab : Set-ADAccountControl -Identity <user> -DoesNotRequirePreAuth $true"

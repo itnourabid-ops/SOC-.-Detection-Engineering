@@ -1,0 +1,9 @@
+# Ne jamais versionner de secrets
+*.kdbx
+secrets*
+.env
+credentials*
+__pycache__/
+*.pyc
+.DS_Store
+SA_BUILD/local/*.bak

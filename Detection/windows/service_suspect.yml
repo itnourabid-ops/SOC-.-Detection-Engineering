@@ -1,0 +1,93 @@
+title: Création d'un service suspect
+id: 5b8e1a4c-7d9f-4c2b-a3e5-6f7a8b9c0d27
+status: experimental
+description: |
+  Installation d'un service pour exécution en SYSTEM ou persistance. Très utilisé
+  pour le mouvement latéral : impacket-psexec (service au nom aléatoire, binaire
+  aléatoire dans ADMIN$), impacket-smbexec (binpath = %COMSPEC% /Q /c echo ...),
+  Cobalt Strike, ou un driver malveillant. Trace : System 7045 (toujours journalisé)
+  et Security 4697 (Audit Security System Extension activé partout).
+references:
+  - https://attack.mitre.org/techniques/T1543/003/
+  - https://attack.mitre.org/techniques/T1569/002/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.persistence
+  - attack.lateral_movement
+  - attack.t1543.003
+  - attack.t1569.002
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    EventID: 7045
+  suspicious_path:
+    ImagePath|contains:
+      - '%COMSPEC%'
+      - 'cmd.exe'
+      - 'powershell'
+      - '\AppData\'
+      - '\Temp\'
+      - '\Users\Public\'
+      - '\\\\127.0.0.1\'
+      - '\ADMIN$\'
+      - ' -enc'
+      - 'mshta'
+      - 'rundll32'
+  suspicious_name:
+    ServiceName|re: '^[A-Za-z]{4,8}$|^[A-Za-z0-9]{8}$'   # nom aléatoire court (psexec)
+  condition: selection and (suspicious_path or suspicious_name)
+falsepositives:
+  - Installation de logiciels légitimes (agents, antivirus) – binaire dans Program Files, signé
+level: medium
+
+x_collecte:
+  evenements: ["System 7045", "Security 4697"]
+  prerequis: "Journal System collecté (validé Guide BUILD p.4) ; Audit Security System Extension"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 4h
+    fields: ComputerName,Service_Name
+  search: |
+    index=main ((source="WinEventLog:System" EventCode=7045) OR (source="WinEventLog:Security" EventCode=4697))
+    | eval binaire=coalesce(Service_File_Name, Image_Path, ImagePath)
+    | eval motif=case(
+        match(binaire, "(?i)%COMSPEC%|cmd(\.exe)?\s+/[qc]"), "interpréteur cmd (smbexec ?)",
+        match(binaire, "(?i)powershell|-enc|mshta|rundll32|regsvr32"), "LOLBIN / powershell",
+        match(binaire, "(?i)\\\\(AppData|Temp|Users\\\\Public)\\\\|\\\\ADMIN\$|127\.0\.0\.1"), "chemin inscriptible / partage admin",
+        match(Service_Name, "^[A-Za-z]{4}$|^[A-Za-z0-9]{8}$") AND NOT match(binaire, "(?i)Program Files"), "nom aléatoire (psexec ?)",
+        true(), null())
+    | where isnotnull(motif)
+    | eval niveau=if(match(motif, "smbexec|psexec|powershell"), "HIGH", "MEDIUM")
+    | table _time ComputerName EventCode Service_Name binaire Service_Account Service_Start_Type motif niveau
+
+x_exclusions:
+  - "Binaires dans C:\\Program Files signés : non retenus par la logique 'nom aléatoire'."
+  - "Lookup services_legit.csv (Service_Name, binaire) à alimenter en RUN."
+
+x_triage:
+  - "Le binaire du service existe-t-il encore ? (psexec le supprime après usage)"
+  - "Un logon réseau type 3 avec un compte admin a-t-il précédé l'installation (< 1 min) ? → mouvement latéral"
+  - "Le champ 'niveau' remonte HIGH pour les motifs typiques Impacket : traiter en priorité."
+
+x_reponse:
+  endiguement:
+    - "Arrêter et supprimer le service (sc stop / sc delete) après collecte du binaire."
+    - "Isoler la source du logon réseau ; désactiver le compte utilisé."
+  remediation:
+    - "Restreindre SMB admin / création de services à distance aux postes d'administration."
+
+x_test:
+  commande: |
+    impacket-psexec TEST/Administrator@192.168.10.101
+    impacket-smbexec TEST/Administrator@192.168.10.101
+  resultat: "À compléter"

@@ -1,0 +1,79 @@
+title: DCSync – réplication AD demandée par un compte non-DC
+id: 8f3b6c9d-2e4a-4b5c-9d0e-1f2a3b4c5d25
+status: experimental
+description: |
+  L'attaquant possédant les droits de réplication (Domain Admins, ou ACL
+  DS-Replication-Get-Changes-All abusive) se fait passer pour un contrôleur de
+  domaine et demande via DRSUAPI les secrets (hash NT, dont krbtgt) de tout ou
+  partie des comptes. Outils : impacket-secretsdump -just-dc, mimikatz lsadump::dcsync.
+  Trace : 4662 sur l'objet domaine avec les GUID des droits de réplication,
+  émis par un compte qui n'est PAS un compte machine de DC.
+references:
+  - https://attack.mitre.org/techniques/T1003/006/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.credential_access
+  - attack.t1003.006
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4662
+    Properties|contains:
+      - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'   # DS-Replication-Get-Changes
+      - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'   # DS-Replication-Get-Changes-All
+      - '89e95b76-444d-4c62-991a-0facbeda640c'   # DS-Replication-Get-Changes-In-Filtered-Set
+  filter_dc:
+    SubjectUserName|endswith: '$'
+  condition: selection and not filter_dc
+falsepositives:
+  - Azure AD Connect (MSOL_*) – absent du périmètre
+level: critical
+
+x_collecte:
+  evenements: ["Security 4662 (DC)", "Security 4624 type 3 (IP source via Logon_ID)"]
+  prerequis: "Audit Directory Service Access : Success (activé sur DC). La SACL par défaut de la racine du domaine couvre normalement ces droits – à vérifier sur le lab."
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/5 * * * *"
+  earliest: "-10m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: compte
+  search: |
+    index=main source="WinEventLog:Security" EventCode=4662
+      (Properties="*1131f6aa-9c07-11d1-f79f-00c04fc2dcd2*" OR Properties="*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*" OR Properties="*89e95b76-444d-4c62-991a-0facbeda640c*")
+    | eval compte=mvindex(Account_Name, 0), LogonId=mvindex(Logon_ID, 0)
+    | where NOT match(compte, "\$$") AND NOT like(compte, "MSOL_%")
+    | join type=left max=1 ComputerName LogonId
+        [ search index=main source="WinEventLog:Security" EventCode=4624 earliest=-24h
+          | eval LogonId=mvindex(Logon_ID, -1)
+          | rename Source_Network_Address as src_ip, Workstation_Name as poste_source
+          | fields ComputerName LogonId src_ip poste_source ]
+    | stats min(_time) as debut count values(src_ip) as src_ip values(poste_source) as poste_source by ComputerName compte LogonId
+    | convert ctime(debut)
+
+x_exclusions:
+  - "Comptes machines (les DC entre eux) et MSOL_*. Aucune autre exclusion : toute occurrence est critique."
+
+x_triage:
+  - "src_ip est-elle un contrôleur de domaine ? Sinon → DCSync quasi certain."
+  - "Comment le compte a-t-il obtenu ces droits ? (membre Domain Admins ? ACL ajoutée récemment → 5136)"
+
+x_reponse:
+  endiguement:
+    - "Considérer TOUS les secrets du domaine comme compromis. Notifier le client sous 2h (CRITICAL)."
+    - "Isoler src_ip ; désactiver le compte ; réinitialiser deux fois le mot de passe krbtgt (à 10h d'intervalle)."
+  remediation:
+    - "Réinitialisation des mots de passe des comptes à privilèges puis de tous les comptes."
+    - "Audit des ACL de réplication sur la racine du domaine ; recherche de Golden Ticket (4769 sans 4768)."
+
+x_test:
+  commande: "impacket-secretsdump -just-dc-user krbtgt TEST/Administrator@192.168.10.100"
+  resultat: "À compléter"

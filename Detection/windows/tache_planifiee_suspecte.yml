@@ -1,0 +1,99 @@
+title: Création d'une tâche planifiée suspecte
+id: 1a4c7e0b-3d5f-4b8a-9c1e-2f3a4b5c6d26
+status: experimental
+description: |
+  Persistance ou exécution différée via le planificateur de tâches (schtasks,
+  Register-ScheduledTask, impacket-atexec). "Suspecte" = la tâche lance un
+  interpréteur ou un LOLBIN, depuis un répertoire inscriptible par l'utilisateur,
+  avec du contenu encodé ou téléchargé, ou s'exécute en SYSTEM.
+  ATTENTION collecte : sur les DC, "Audit Other Object Access Events" = No Auditing
+  (annexe p.16) → l'événement 4698 n'existe PAS sur WINSERV-DC. La règle combine
+  donc Sysmon 1 (schtasks.exe /create) et Sysmon 11 (fichier créé dans
+  C:\Windows\System32\Tasks\, couvre aussi l'API / atexec) – présents partout –
+  et 4698 là où il existe (serveurs).
+references:
+  - https://attack.mitre.org/techniques/T1053/005/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.persistence
+  - attack.execution
+  - attack.t1053.005
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection_schtasks:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains: '/create'
+  selection_task_file:
+    EventID: 11
+    TargetFilename|startswith: 'C:\Windows\System32\Tasks\'
+  suspicious:
+    - '|contains':
+      - '\AppData\'
+      - '\Temp\'
+      - '\Users\Public\'
+      - 'powershell'
+      - 'cmd /c'
+      - ' -enc'
+      - 'http'
+      - 'mshta'
+      - 'rundll32'
+      - 'regsvr32'
+      - 'certutil'
+      - '/ru system'
+  condition: (selection_schtasks and suspicious) or selection_task_file
+falsepositives:
+  - Installeurs / mises à jour logicielles (Google Update, Edge, Adobe) – exclusion par nom de tâche
+level: medium
+
+x_collecte:
+  evenements: ["Sysmon 1", "Sysmon 11", "Security 4698 (serveurs uniquement)"]
+  prerequis: "Sysmon-modular (11_file_create inclut System32\\Tasks – à vérifier) ; Other Object Access Events sur serveurs"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 4h
+    fields: ComputerName,tache
+  search: |
+    index=main (
+        (source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 Image="*\\schtasks.exe" CommandLine="*/create*")
+     OR (source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=11 TargetFilename="C:\\Windows\\System32\\Tasks\\*")
+     OR (source="WinEventLog:Security" EventCode=4698) )
+    | eval detail=coalesce(CommandLine, Task_Content, Message)
+    | rex field=detail "(?i)/tn\s+\"?(?<tache_cli>[^\"/]+)"
+    | eval tache=coalesce(Task_Name, tache_cli, replace(TargetFilename, "(?i)^C:\\\\Windows\\\\System32\\\\Tasks", ""))
+    | eval suspect=if(match(detail, "(?i)(\\\\AppData\\\\|\\\\Temp\\\\|\\\\Users\\\\Public|powershell|cmd(\.exe)? /c|-enc|https?://|mshta|rundll32|regsvr32|certutil|bitsadmin|/ru\s+\"?system)") OR EventCode==11, 1, 0)
+    | where suspect=1 AND NOT match(tache, "(?i)(GoogleUpdate|MicrosoftEdgeUpdate|OneDrive|Adobe)")
+    | eval auteur=coalesce(User, mvindex(Account_Name, 0))
+    | stats min(_time) as debut values(EventCode) as sources values(detail) as detail values(auteur) as auteur values(Image) as processus by ComputerName tache
+    | convert ctime(debut)
+
+x_exclusions:
+  - "Liste de noms de tâches légitimes (regex) ; à externaliser en lookup taches_legit.csv en RUN."
+  - "Le Sysmon 11 seul est conservé car il couvre la création par API (atexec, Register-ScheduledTask) ; l'exclusion par nom évite le bruit des mises à jour."
+
+x_triage:
+  - "Que lance la tâche (action / commande) ? Quel binaire, depuis quel chemin ?"
+  - "Qui l'a créée (auteur) et depuis quel processus (processus) ? À distance (atexec : svchost/taskhost + logon réseau) ?"
+  - "Le binaire lancé existe-t-il sur disque ? Hash connu ?"
+
+x_reponse:
+  endiguement:
+    - "Désactiver puis supprimer la tâche (schtasks /delete /tn <tache> /f) après capture de son XML."
+    - "Mettre en quarantaine le binaire / script référencé."
+  remediation:
+    - "Rechercher la même tâche sur les autres hôtes ; identifier le vecteur d'accès initial."
+
+x_test:
+  commande: |
+    schtasks /create /tn Updater /tr "powershell -w hidden -enc ZQBjAGgAbwAgAHQAZQBzAHQA" /sc minute /mo 5 /ru SYSTEM
+    impacket-atexec TEST/Administrator@192.168.10.101 whoami
+  resultat: "À compléter"

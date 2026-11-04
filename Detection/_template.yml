@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------
+# TEMPLATE pseudo-Sigma – Groupe 3
+# Copier ce fichier dans Detection/<domaine>/<nom>.yml
+# ---------------------------------------------------------------
+title: Nom court et explicite de la règle
+id: 00000000-0000-0000-0000-000000000000   # python3 -c "import uuid;print(uuid.uuid4())"
+status: experimental                        # experimental | test | stable
+description: |
+  Ce que la règle détecte, et pourquoi c'est suspect.
+references:
+  - https://attack.mitre.org/techniques/TXXXX/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.<tactique>
+  - attack.tXXXX
+logsource:
+  product: windows            # windows | linux | network
+  service: security           # security | system | sysmon | kunai | suricata
+detection:
+  selection:
+    EventID: 0000
+  condition: selection
+falsepositives:
+  - Cas légitime connu
+level: medium                 # info | low | medium | high | critical
+
+# ------------------------- Extensions Groupe 3 -------------------------
+x_collecte:
+  evenements: ["Security 0000"]
+  prerequis: "Politique d'audit / config Sysmon nécessaire"
+  valide_sur_lab: false       # passer à true après test réel
+
+x_splunk:
+  cron: "*/15 * * * *"
+  earliest: "-20m@m"
+  latest: "-5m@m"
+  trigger: once               # once | each
+  throttle:                   # optionnel
+    period: 1h
+    fields: ComputerName
+  search: |
+    index=main source="WinEventLog:Security" EventCode=0000
+    | table _time ComputerName
+
+x_exclusions:
+  - "Comptes / hôtes / processus à exclure, et comment (lookup, where, NOT ...)"
+
+x_triage:
+  - "Question 1 pour distinguer vrai et faux positif"
+
+x_reponse:
+  endiguement:
+    - "Action immédiate"
+  remediation:
+    - "Action de fond"
+
+x_test:
+  commande: "Commande de rejeu depuis Kali"
+  resultat: "À compléter après test"

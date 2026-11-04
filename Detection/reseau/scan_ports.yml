@@ -1,0 +1,74 @@
+title: Scan de ports interne (horizontal / vertical)
+id: c3d4e5f6-7a8b-4c9d-0e1f-2a3b4c5d6e32
+status: experimental
+description: |
+  Reconnaissance réseau depuis un hôte interne (ou via le VPN Tailscale) :
+    - vertical : une source teste de nombreux PORTS sur peu d'hôtes (nmap -p-) ;
+    - horizontal : une source teste un même port sur de nombreux HÔTES (balayage
+      SMB/RDP/SSH du /24).
+  Source : flux Suricata (eve.json, event_type=flow), complétés par les alertes
+  ET SCAN de Suricata.
+  Limite : la sonde ne voit que le trafic qui passe par elle (FW en prod ;
+  sur le lab, seulement le trafic du serveur Linux, sauf port miroir).
+references:
+  - https://attack.mitre.org/techniques/T1046/
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.discovery
+  - attack.t1046
+logsource:
+  product: network
+  service: suricata
+detection:
+  selection:
+    event_type: flow
+    proto: TCP
+  condition: selection | count(distinct dest_port) by src_ip, dest_ip > 50 or count(distinct dest_ip) by src_ip, dest_port > 20
+falsepositives:
+  - Scanner de vulnérabilités / outil de supervision autorisé
+level: medium
+
+x_collecte:
+  evenements: ["Suricata eve.json : flow, alert (ET SCAN)"]
+  prerequis: "Suricata + UF (sourcetype=suricata, JSON) ; emplacement de la sonde à documenter"
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/10 * * * *"
+  earliest: "-15m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: src_ip
+  search: |
+    index=main sourcetype=suricata ((event_type=flow proto=TCP) OR (event_type=alert "alert.signature"="ET SCAN*"))
+    | eval sig='alert.signature'
+    | stats dc(dest_port) as nb_ports dc(dest_ip) as nb_hotes values(sig) as signatures
+        min(_time) as debut max(_time) as fin by src_ip
+    | eval type=case(nb_ports>=50 AND nb_hotes<=5, "vertical", nb_hotes>=20, "horizontal", nb_ports>=50, "mixte", isnotnull(signatures), "signature Suricata", true(), null())
+    | where isnotnull(type)
+    | convert ctime(debut) ctime(fin)
+
+x_exclusions:
+  - "Lookup scanners_autorises.csv (src_ip) – ex. outil de supervision."
+  - "Seuils 50 ports / 20 hôtes en 10 min, à ajuster en RUN."
+
+x_triage:
+  - "src_ip : quel hôte ? (poste utilisateur, serveur, IP Tailscale 100.x.x.x)"
+  - "Ports visés : 445/135/3389/5985/22/88/389 → préparation de mouvement latéral / attaque AD."
+  - "Un scan réussi est-il suivi de connexions (authentifications) vers les hôtes découverts ?"
+
+x_reponse:
+  endiguement:
+    - "Isoler / bloquer src_ip ; si IP Tailscale, révoquer le nœud dans la console Tailscale."
+  remediation:
+    - "Identifier le processus à l'origine sur l'hôte source (Sysmon 3 / Kunai connect)."
+
+x_test:
+  commande: |
+    nmap -sS -p- 192.168.10.101          # vertical
+    nmap -sS -p 445 192.168.10.0/24      # horizontal
+  resultat: "À compléter"

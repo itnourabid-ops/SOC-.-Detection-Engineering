@@ -1,0 +1,95 @@
+title: Linux – multiples commandes d'énumération en rafale
+id: a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c30
+status: experimental
+description: |
+  Après un accès initial, l'attaquant reconnaît le système : identité, réseau,
+  processus, privilèges sudo, binaires SUID, crons. Individuellement banales,
+  ces commandes deviennent suspectes quand beaucoup de commandes DIFFÉRENTES
+  sont lancées par le même utilisateur en quelques minutes (ou par un script :
+  linpeas, LinEnum).
+  Source : Kunai (événement execve), déployé sur tous les serveurs Linux.
+references:
+  - https://attack.mitre.org/techniques/T1082/
+  - https://attack.mitre.org/techniques/T1033/
+  - https://github.com/kunai-project/kunai
+author: Groupe 3 – 5A 4AS
+date: 2026/11/04
+modified: 2026/11/04
+tags:
+  - attack.discovery
+  - attack.t1082
+  - attack.t1033
+  - attack.t1016
+  - attack.t1057
+logsource:
+  product: linux
+  service: kunai
+detection:
+  selection:
+    info.event.name: execve
+    data.exe.path|endswith:
+      - /whoami
+      - /id
+      - /uname
+      - /hostname
+      - /ifconfig
+      - /ip
+      - /netstat
+      - /ss
+      - /ps
+      - /w
+      - /last
+      - /lsb_release
+      - /crontab
+      - /sudo
+      - /find
+      - /getent
+      - /arp
+      - /route
+  condition: selection | count(distinct data.exe.path) by info.host.name, info.task.uid > 5   # en 10 min
+falsepositives:
+  - Scripts de supervision / inventaire (agent de monitoring), administrateur qui diagnostique
+level: low
+
+x_collecte:
+  evenements: ["Kunai execve (JSON)"]
+  prerequis: |
+    Kunai + Universal Forwarder (sourcetype=kunai, JSON). NOMS DE CHAMPS À CONFIRMER
+    sur un vrai événement : `index=main sourcetype=kunai | head 5` puis adapter.
+  valide_sur_lab: false
+
+x_splunk:
+  cron: "*/10 * * * *"
+  earliest: "-15m@m"
+  latest: "-5m@m"
+  trigger: each
+  throttle:
+    period: 1h
+    fields: hote,uid
+  search: |
+    index=main sourcetype=kunai "info.event.name"=execve
+    | rename "info.host.name" as hote, "info.task.uid" as uid, "data.exe.path" as exe, "data.command_line" as cmd, "data.ancestors" as ancetres
+    | eval binaire=mvindex(split(exe, "/"), -1)
+    | where match(binaire, "^(whoami|id|uname|hostname|ifconfig|ip|netstat|ss|ps|w|last|lsb_release|crontab|sudo|find|getent|arp|route)$")
+    | eval marqueur=case(match(cmd, "-perm\s+-?[u4]"), "recherche SUID", match(cmd, "sudo\s+-l"), "sudo -l", true(), null())
+    | stats min(_time) as debut max(_time) as fin dc(binaire) as nb_binaires values(cmd) as commandes values(marqueur) as marqueurs values(ancetres) as ancetres
+        by hote uid
+    | where nb_binaires >= 5 OR isnotnull(marqueurs)
+    | convert ctime(debut) ctime(fin)
+
+x_exclusions:
+  - "Exclure par ancêtre (ancetres) les agents de supervision identifiés en RUN (ex. *zabbix*, *nagios*)."
+
+x_triage:
+  - "Session d'origine : SSH depuis le bastion (192.168.10.90) ? Service web (ancêtre apache/nginx/python) → webshell !"
+  - "Marqueurs d'élévation de privilèges (SUID, sudo -l) ? Téléchargement de linpeas (curl/wget) juste avant ?"
+
+x_reponse:
+  endiguement:
+    - "Si webshell ou utilisateur illégitime : couper la session (pkill -u), bloquer l'IP source."
+  remediation:
+    - "Investiguer l'accès initial (auth.log / Kunai connect) ; vérifier les fichiers récemment créés."
+
+x_test:
+  commande: "for c in whoami id 'uname -a' hostname 'ip a' 'ss -tlnp' 'ps aux' 'sudo -l' 'find / -perm -4000 2>/dev/null'; do $c; done"
+  resultat: "À compléter"

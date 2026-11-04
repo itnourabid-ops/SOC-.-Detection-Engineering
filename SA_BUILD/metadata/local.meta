@@ -1,0 +1,77 @@
+# FICHIER GÉNÉRÉ par Automatisation/sigma2savedsearch.py – ne pas éditer à la main.
+# Modifier les YAML dans Detection/ puis régénérer.
+
+[savedsearches/%5BBUILD%5D%20%5BHIGH%5D%20AS-REPRoasting%20%E2%80%93%20TGT%20d%C3%A9livr%C3%A9%20sans%20pr%C3%A9-authentification]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BCRITICAL%5D%20DCSync%20%E2%80%93%20r%C3%A9plication%20AD%20demand%C3%A9e%20par%20un%20compte%20non-DC]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BHIGH%5D%20Kerberoasting%20%E2%80%93%20demande%20de%20tickets%20de%20service%20en%20RC4]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BMEDIUM%5D%20Password%20Spraying%20%E2%80%93%20%C3%A9checs%20d%27authentification%20sur%20de%20nombreux%20comptes]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BHIGH%5D%20Shadow%20Credentials%20%E2%80%93%20%C3%A9criture%20de%20msDS-KeyCredentialLink]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BLOW%5D%20Linux%20%E2%80%93%20multiples%20commandes%20d%27%C3%A9num%C3%A9ration%20en%20rafale]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BHIGH%5D%20Linux%20%E2%80%93%20recherche%20et%20collecte%20de%20secrets%20%28password%20looting%29]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BHIGH%5D%20Beaconing%20C2%20%E2%80%93%20connexions%20sortantes%20%C3%A0%20intervalle%20r%C3%A9gulier]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BMEDIUM%5D%20Scan%20de%20ports%20interne%20%28horizontal%20%2F%20vertical%29]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BMEDIUM%5D%20Cr%C3%A9ation%20ou%20modification%20d%27une%20cl%C3%A9%20Run%20%28persistance%20au%20d%C3%A9marrage%29]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BCRITICAL%5D%20Dump%20de%20la%20m%C3%A9moire%20LSASS]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BHIGH%5D%20Impacket%20WMIExec%20%E2%80%93%20ex%C3%A9cution%20de%20commandes%20%C3%A0%20distance%20via%20WMI]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BMEDIUM%5D%20Cr%C3%A9ation%20d%27un%20service%20suspect]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BMEDIUM%5D%20Cr%C3%A9ation%20d%27une%20t%C3%A2che%20planifi%C3%A9e%20suspecte]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
+
+[savedsearches/%5BBUILD%5D%20%5BMEDIUM%5D%20Ex%C3%A9cution%20distante%20via%20WMI%20sans%20redirection%20%28wmiexec%20-silentcommand%29]
+access = read : [ * ], write : [ admin, power ]
+export = none
+owner = admin
