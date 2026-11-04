@@ -1,1 +1,1 @@
-# SOC-.-Detection-Engineering
+# SOC - Detection-Engineering
