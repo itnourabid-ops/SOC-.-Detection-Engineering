@@ -1,4 +1,4 @@
-# Projet SOC – 5A 4AS – Groupe 3
+# SOC - Detection Engineering
 
 Mini SOC **AEGIS CyberProtect** – périmètre client **Dunder Mifflin**.
 Phase de BUILD : conception, test et documentation d'un jeu de règles de détection (Splunk → n8n → DFIR-IRIS).
